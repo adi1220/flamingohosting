@@ -31,10 +31,11 @@ class TranscribeRequest(BaseModel):
 
 class EvaluateRequest(BaseModel):
     audio_dir: str
-    gt_dir: str
+    gt_dir: Optional[str] = None
     prompt: Optional[str] = None
     max_new_tokens: int = 128
     match_mode: str = "exact"
+    use_folder_as_label: bool = False
 
 
 @app.on_event("startup")
@@ -121,14 +122,24 @@ async def evaluate(request: EvaluateRequest):
             status_code=400,
             detail=f"Audio directory not found: {request.audio_dir}"
         )
-    if not Path(request.gt_dir).exists():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Ground truth directory not found: {request.gt_dir}"
-        )
+    
+    if not request.use_folder_as_label:
+        # Only validate gt_dir if not using folder names as labels
+        if not request.gt_dir:
+            raise HTTPException(
+                status_code=400,
+                detail="gt_dir is required when use_folder_as_label=False"
+            )
+        if not Path(request.gt_dir).exists():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ground truth directory not found: {request.gt_dir}"
+            )
     
     try:
         logger.info(f"Evaluating folder: {request.audio_dir}")
+        if request.use_folder_as_label:
+            logger.info("Using subfolder names as labels")
         start_time = __import__('time').time()
         
         result = runner.evaluate_folder(
@@ -137,7 +148,8 @@ async def evaluate(request: EvaluateRequest):
             MODEL_BUNDLE,
             request.prompt,
             request.max_new_tokens,
-            request.match_mode
+            request.match_mode,
+            request.use_folder_as_label
         )
         
         elapsed = __import__('time').time() - start_time
