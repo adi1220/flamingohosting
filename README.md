@@ -190,6 +190,18 @@ curl -X POST http://127.0.0.1:8000/evaluate \
   }'
 ```
 
+**With Folder-as-Label Mode:**
+```bash
+curl -X POST http://127.0.0.1:8000/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "audio_dir": "/absolute/path/to/audio",
+    "use_folder_as_label": true,
+    "prompt": "What instrument is playing?",
+    "match_mode": "contains"
+  }'
+```
+
 Response:
 ```json
 {
@@ -255,6 +267,93 @@ python cli.py --model-dir /custom/path/to/model transcribe --path /data/audio.wa
 ```
 
 ## Evaluation Mode
+
+The evaluation framework supports two modes:
+
+### Mode 1: Separate Ground Truth Files (Default)
+
+**Folder Structure:**
+```
+audio/
+  ├── sample001.wav
+  ├── clip02.mp3
+  └── test_03.flac
+
+labels/
+  ├── sample001.txt
+  ├── clip02.txt
+  └── test_03.txt
+```
+
+Each `.txt` file contains the expected answer.
+
+**Usage:**
+```bash
+python cli.py evaluate \
+  --audio-dir ./audio \
+  --gt-dir ./labels \
+  --prompt "What instruments are playing?"
+```
+
+### Mode 2: Folder Names as Labels
+
+**Folder Structure:**
+```
+audio/
+  ├── piano/
+  │   ├── song1.wav
+  │   ├── song2.mp3
+  │   └── song3.wav
+  ├── guitar/
+  │   ├── track1.wav
+  │   └── track2.flac
+  └── drums/
+      ├── beat1.wav
+      └── beat2.mp3
+```
+
+The subfolder name (piano, guitar, drums) IS the ground truth label.
+
+**Usage:**
+```bash
+# CLI
+python cli.py evaluate \
+  --audio-dir ./audio \
+  --use-folder-as-label \
+  --prompt "What instrument is playing?"
+
+# Python API
+result = runner.evaluate_folder(
+    audio_dir="./audio",
+    gt_dir=None,  # Not needed in this mode
+    model_bundle=model_bundle,
+    prompt="What instrument is playing?",
+    use_folder_as_label=True
+)
+```
+
+**REST API:**
+```bash
+curl -X POST http://127.0.0.1:8000/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "audio_dir": "/absolute/path/to/audio",
+    "use_folder_as_label": true,
+    "prompt": "What instrument is playing?",
+    "match_mode": "contains"
+  }'
+```
+
+### Match Modes
+
+- **exact**: Prediction must exactly match ground truth (after normalization)
+- **contains**: Ground truth must be contained within prediction (useful when GT is a keyword and prediction is a full sentence)
+
+**Example:**
+- GT: "piano"
+- Prediction: "This audio features a piano playing classical music"
+- `exact` mode: ❌ No match
+- `contains` mode: ✅ Match (because "piano" is in the prediction)
 
 ### Folder Structure
 
