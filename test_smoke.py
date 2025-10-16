@@ -1,195 +1,174 @@
-# Quick Start Guide
+#!/usr/bin/env python3
+"""
+Smoke test script for Audio Flamingo offline runner.
+Creates synthetic test data and verifies all components work.
+"""
 
-## What You Need to Know
+import os
+import sys
+import json
+import tempfile
+import shutil
+from pathlib import Path
+import numpy as np
+import torchaudio
 
-**Audio Flamingo 3 is an audio understanding model, NOT a transcription model.**
+# Try to import the runner
+try:
+    import audio_flamingo_runner as runner
+except ImportError:
+    print("ERROR: Cannot import audio_flamingo_runner.py")
+    print("Make sure audio_flamingo_runner.py is in the current directory")
+    sys.exit(1)
 
-### ❌ Wrong Expectation
-"It will convert speech to text like Whisper"
 
-### ✅ Correct Understanding  
-"It answers questions about audio - any audio (speech, music, sounds)"
+def create_test_audio(path: str, duration: float = 2.0, sample_rate: int = 16000):
+    """Create a simple sine wave audio file for testing."""
+    t = np.linspace(0, duration, int(sample_rate * duration))
+    # Create a simple tone (440 Hz)
+    audio = np.sin(2 * np.pi * 440 * t)
+    # Add some variation
+    audio = audio * 0.5 + np.sin(2 * np.pi * 880 * t) * 0.3
+    
+    # Convert to tensor
+    waveform = torch.from_numpy(audio).float().unsqueeze(0)
+    
+    # Save
+    torchaudio.save(path, waveform, sample_rate)
+    print(f"Created test audio: {path}")
 
-## Example Interactions
 
-### Music Analysis
-```python
-# Ask: "What instruments are playing?"
-# Response: "This piece features a piano, violin, and cello in a classical arrangement."
-```
+def run_smoke_test():
+    """Run complete smoke test of all functionality."""
+    print("=" * 60)
+    print("Audio Flamingo Offline Runner - Smoke Test")
+    print("=" * 60)
+    
+    # Get model directory
+    model_dir = os.getenv("MODEL_DIR", "{{MODEL_DIR}}")
+    if model_dir == "{{MODEL_DIR}}":
+        print("\nERROR: MODEL_DIR not set!")
+        print("Please set MODEL_DIR environment variable:")
+        print("  export MODEL_DIR=/path/to/your/audio-flamingo-3-model")
+        sys.exit(1)
+    
+    if not Path(model_dir).exists():
+        print(f"\nERROR: Model directory not found: {model_dir}")
+        sys.exit(1)
+    
+    print(f"\nModel directory: {model_dir}")
+    
+    # Create temporary test directory
+    temp_dir = tempfile.mkdtemp(prefix="audio_flamingo_test_")
+    print(f"Test directory: {temp_dir}")
+    
+    try:
+        # Create test audio files
+        audio_dir = Path(temp_dir) / "audio"
+        labels_dir = Path(temp_dir) / "labels"
+        audio_dir.mkdir()
+        labels_dir.mkdir()
+        
+        print("\n1. Creating test audio files...")
+        test_files = []
+        test_prompts = [
+            "Please describe the audio in detail.",
+            "What sounds can you hear in this audio?",
+            "Describe the characteristics of this audio."
+        ]
+        
+        for i in range(3):
+            audio_path = audio_dir / f"test_{i:03d}.wav"
+            create_test_audio(str(audio_path), duration=1.0 + i * 0.5)
+            test_files.append(str(audio_path))
+            
+            # Create corresponding label with expected answer
+            label_path = labels_dir / f"test_{i:03d}.txt"
+            with open(label_path, 'w') as f:
+                # These are example expected answers
+                f.write(f"This audio contains a tone at 440 Hz with some harmonics.")
+        
+        # Define the prompt to use for evaluation
+        eval_prompt = "Please describe the audio in detail."
+        
+        # Load model
+        print("\n2. Loading model...")
+        model_bundle = runner.load_model(model_dir=model_dir)
+        print(f"   Device: {model_bundle['device']}")
+        
+        # Test single file transcription
+        print("\n3. Testing single file audio understanding...")
+        result = runner.transcribe_file(
+            test_files[0],
+            model_bundle,
+            prompt="Please describe the audio in detail.",
+            max_new_tokens=64
+        )
+        print(f"   File: {result['file']}")
+        print(f"   Response: {result['text'][:100]}...")
+        print(f"   Tokens: {result['tokens_generated']}")
+        print(f"   Time: {result['elapsed_sec']:.2f}s")
+        
+        # Test batch transcription
+        print("\n4. Testing batch audio understanding...")
+        results = runner.transcribe_files(
+            test_files,
+            model_bundle,
+            prompt="What sounds can you hear?",
+            max_new_tokens=64
+        )
+        print(f"   Processed {len(results)} files")
+        for r in results:
+            print(f"   - {Path(r['file']).name}: {r['text'][:50]}...")
+        
+        # Test evaluation
+        print("\n5. Testing evaluation...")
+        eval_result = runner.evaluate_folder(
+            str(audio_dir),
+            str(labels_dir),
+            model_bundle,
+            prompt=eval_prompt,
+            max_new_tokens=64
+        )
+        
+        summary = eval_result['summary']
+        print(f"   Files evaluated: {summary['count']}")
+        print(f"   True Positives: {summary['tp']}")
+        print(f"   False Positives: {summary['fp']}")
+        print(f"   Precision: {summary['precision']:.2f}")
+        print(f"   Recall: {summary['recall']:.2f}")
+        print(f"   F1 Score: {summary['f1']:.2f}")
+        
+        # Save results
+        results_file = Path(temp_dir) / "test_results.json"
+        with open(results_file, 'w') as f:
+            json.dump({
+                "transcription": {"results": results},
+                "evaluation": eval_result
+            }, f, indent=2)
+        print(f"\n   Results saved to: {results_file}")
+        
+        print("\n" + "=" * 60)
+        print("✓ All smoke tests passed!")
+        print("=" * 60)
+        print(f"\nTest files located at: {temp_dir}")
+        print("You can manually inspect the results or delete the directory.")
+        
+        return True
+        
+    except Exception as e:
+        print(f"\n✗ ERROR during testing: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+        
+    finally:
+        # Optionally clean up (commented out to allow inspection)
+        # shutil.rmtree(temp_dir)
+        pass
 
-### Sound Recognition
-```python
-# Ask: "What sounds can you hear in this audio?"
-# Response: "I can hear birds chirping, wind blowing, and distant traffic noise."
-```
 
-### Speech Understanding
-```python
-# Ask: "Summarize what the speaker is talking about."
-# Response: "The speaker is discussing climate change solutions and renewable energy."
-```
-
-### Audio Description
-```python
-# Ask: "Please describe the audio in detail."
-# Response: "This is a conversation between two people in what sounds like a cafe setting..."
-```
-
-## 5-Minute Setup
-
-### 1. Download Model (One Time)
-
-```bash
-pip install huggingface_hub
-
-python -c "
-from huggingface_hub import snapshot_download
-snapshot_download(
-    repo_id='nvidia/audio-flamingo-3',
-    local_dir='./audio-flamingo-3-model',
-    local_dir_use_symlinks=False
-)
-"
-```
-
-### 2. Install Dependencies
-
-```bash
-pip install torch torchaudio transformers fastapi uvicorn pydantic
-```
-
-### 3. Set Model Path
-
-```bash
-export MODEL_DIR=/absolute/path/to/audio-flamingo-3-model
-```
-
-### 4. Test It!
-
-**Python:**
-```python
-import audio_flamingo_runner as runner
-
-# Load model
-model = runner.load_model()
-
-# Ask a question about audio
-result = runner.transcribe_file(
-    path="your_audio.mp3",
-    model_bundle=model,
-    prompt="What instruments are playing in this song?"
-)
-
-print(result["text"])
-```
-
-**CLI:**
-```bash
-python cli.py transcribe \
-  --path your_audio.mp3 \
-  --prompt "What sounds can you hear?"
-```
-
-**REST API:**
-```bash
-# Start server
-python server.py
-
-# In another terminal
-curl -X POST http://127.0.0.1:8000/transcribe \
-  -H "Content-Type: application/json" \
-  -d '{
-    "paths": ["/absolute/path/to/your_audio.mp3"],
-    "prompt": "Please describe this audio."
-  }'
-```
-
-## Common Prompts
-
-### For Music
-- "What instruments are playing in this audio?"
-- "Describe the genre and mood of this music."
-- "What is the tempo and rhythm?"
-
-### For Sounds
-- "What sounds can you hear?"
-- "Is this indoors or outdoors?"
-- "Describe the acoustic environment."
-
-### For Speech
-- "Summarize what the speaker is saying."
-- "What is the speaker's tone or mood?"
-- "Please transcribe and explain this audio."
-
-### General
-- "Please describe the audio in detail."
-- "What happens in this audio?"
-- "Analyze this audio and tell me what's happening."
-
-## Evaluation Mode
-
-If you want to test the model's accuracy:
-
-**1. Create your test set:**
-```
-audio/
-  ├── song1.mp3
-  └── talk1.wav
-
-labels/
-  ├── song1.txt  ("Piano and guitar playing jazz music")
-  └── talk1.txt  ("Two people discussing business plans")
-```
-
-**2. Run evaluation:**
-```bash
-python cli.py evaluate \
-  --audio-dir ./audio \
-  --gt-dir ./labels \
-  --prompt "Please describe the audio in detail."
-```
-
-**3. Get metrics:**
-- Precision: How accurate are the matches?
-- Recall: How many did it get right?
-- F1 Score: Overall performance
-
-## Tips
-
-1. **Be specific in your prompts** - "What instruments?" vs "Describe the audio"
-2. **Adjust max_new_tokens** - Longer responses need more tokens (default: 128)
-3. **Use GPU** - Much faster inference (automatically detected)
-4. **Default prompt** - If you don't provide a prompt, it uses "Please describe the audio in detail."
-
-## Need Speech Transcription?
-
-If you specifically need to convert speech to text (like subtitles), use:
-- OpenAI Whisper
-- wav2vec2
-- Other ASR (Automatic Speech Recognition) models
-
-Audio Flamingo is for **understanding and reasoning** about audio, not just transcription.
-
-## Troubleshooting
-
-**"Model not found"**
-- Make sure MODEL_DIR points to the correct directory
-- Verify the directory contains `config.json` and model weights
-
-**"Out of memory"**
-- Reduce `max_new_tokens`
-- Use CPU instead of GPU (slower but uses less memory)
-- Process one file at a time
-
-**"Unexpected output"**
-- Check your prompt - it should be a question or instruction
-- The model needs context about what you want to know
-- Try different phrasings of your question
-
-## What's Next?
-
-- Check `README.md` for complete documentation
-- See `test_smoke.py` for example code
-- Read the paper: https://arxiv.org/abs/2507.08128
-- Try the Hugging Face demo: https://huggingface.co/spaces/manoskary/audio-flamingo-3
+if __name__ == "__main__":
+    import torch
+    success = run_smoke_test()
+    sys.exit(0 if success else 1)
