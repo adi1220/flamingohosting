@@ -76,6 +76,9 @@ def transcribe_file(
 ) -> dict:
     """
     Runs inference on a SINGLE file.
+    Note: Audio Flamingo is an audio understanding model, not a transcription model.
+    It answers questions about audio (sounds, music, speech).
+    
     Returns JSON:
       {
         "file": "<input path>",
@@ -93,25 +96,22 @@ def transcribe_file(
     # Load and preprocess audio
     audio_array, sample_rate = _load_and_preprocess_audio(path, processor, device)
     
-    # Prepare inputs
-    # For audio-flamingo, we need to process audio as input
+    # Default prompt if none provided - Audio Flamingo expects a question/instruction
+    if prompt is None:
+        prompt = "Please describe the audio in detail."
+    
+    # Process audio and text together
+    # Audio Flamingo uses a vision-language model architecture adapted for audio
     inputs = processor(
-        audio=audio_array,
-        sampling_rate=sample_rate,
-        return_tensors="pt"
+        text=prompt,
+        audios=audio_array,
+        return_tensors="pt",
+        padding=True,
+        sampling_rate=sample_rate
     )
     
     # Move inputs to device
     inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
-    
-    # Add prompt if provided
-    if prompt:
-        text_inputs = processor.tokenizer(
-            prompt,
-            return_tensors="pt",
-            padding=True
-        )
-        inputs.update({k: v.to(device) for k, v in text_inputs.items()})
     
     # Generate
     with torch.no_grad():
@@ -120,11 +120,17 @@ def transcribe_file(
                 **inputs,
                 max_new_tokens=max_new_tokens,
                 do_sample=False,
-                num_beams=1
+                num_beams=1,
+                temperature=None,
+                top_p=None
             )
     
-    # Decode output
+    # Decode output - remove the input prompt from the generated text
     generated_text = processor.batch_decode(outputs, skip_special_tokens=True)[0]
+    
+    # Remove the prompt from the output if it's included
+    if prompt in generated_text:
+        generated_text = generated_text.replace(prompt, "").strip()
     
     elapsed_sec = time.time() - start_time
     tokens_generated = outputs.shape[1]
@@ -176,81 +182,155 @@ def evaluate_folder(
     model_bundle: dict,
     prompt: Optional[str] = None,
     max_new_tokens: int = 128,
-    match_mode: str = "exact"
+    match_mode: str = "exact",
+    use_folder_as_label: bool = False
 ) -> dict:
     """
-    Evaluation mode. For each audio file in audio_dir, load a ground truth file
-    with the SAME stem name from gt_dir and extension .txt, containing the target string.
+    Evaluation mode. Two modes supported:
+    
+    Mode 1 (use_folder_as_label=False, default):
+        For each audio file in audio_dir, load a ground truth file
+        with the SAME stem name from gt_dir and extension .txt, containing the target string.
+        
+    Mode 2 (use_folder_as_label=True):
+        audio_dir should contain subfolders where each subfolder name IS the label.
+        Example structure:
+            audio_dir/
+                piano/
+                    file1.wav
+                    file2.mp3
+                guitar/
+                    file3.wav
+                drums/
+                    file4.wav
+        In this mode, gt_dir is ignored.
     """
     audio_path = Path(audio_dir)
-    gt_path = Path(gt_dir)
+    gt_path = Path(gt_dir) if gt_dir else None
     
-    # Find all audio files
     audio_extensions = {'.wav', '.flac', '.mp3', '.m4a'}
-    audio_files = [f for f in audio_path.iterdir() 
-                   if f.suffix.lower() in audio_extensions]
-    
-    if not audio_files:
-        return {
-            "summary": {
-                "count": 0,
-                "tp": 0,
-                "fp": 0,
-                "fn": 0,
-                "precision": 0.0,
-                "recall": 0.0,
-                "f1": 0.0
-            },
-            "details": []
-        }
-    
     details = []
-    tp = 0
     
-    for audio_file in audio_files:
-        # Find corresponding ground truth file
-        gt_file = gt_path / f"{audio_file.stem}.txt"
+    if use_folder_as_label:
+        # Mode 2: Use subfolder names as labels
+        # Find all subdirectories in audio_dir
+        subdirs = [d for d in audio_path.iterdir() if d.is_dir()]
         
-        if not gt_file.exists():
-            print(f"Warning: No ground truth found for {audio_file.name}, skipping...")
-            continue
+        if not subdirs:
+            print("Warning: No subdirectories found in audio_dir when use_folder_as_label=True")
+            return {
+                "summary": {
+                    "count": 0,
+                    "tp": 0,
+                    "fp": 0,
+                    "fn": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0
+                },
+                "details": []
+            }
         
-        # Load ground truth
-        with open(gt_file, 'r', encoding='utf-8') as f:
-            gt_text = f.read()
+        # Process each subfolder
+        for subdir in subdirs:
+            label = subdir.name  # Folder name is the ground truth label
+            audio_files = [f for f in subdir.iterdir() if f.suffix.lower() in audio_extensions]
+            
+            for audio_file in audio_files:
+                # Run inference
+                result = transcribe_file(
+                    str(audio_file),
+                    model_bundle,
+                    prompt,
+                    max_new_tokens
+                )
+                
+                pred_text = result["text"]
+                gt_text = label
+                
+                # Normalize both texts
+                pred_normalized = _normalize_text(pred_text)
+                gt_normalized = _normalize_text(gt_text)
+                
+                # Compare
+                if match_mode == "exact":
+                    match = 1 if pred_normalized == gt_normalized else 0
+                elif match_mode == "contains":
+                    # Check if GT label is contained in prediction
+                    match = 1 if gt_normalized in pred_normalized else 0
+                else:
+                    match = 1 if pred_normalized == gt_normalized else 0
+                
+                details.append({
+                    "file": str(audio_file.relative_to(audio_path)),
+                    "pred": pred_text,
+                    "gt": gt_text,
+                    "match": match
+                })
+    
+    else:
+        # Mode 1: Original mode with separate gt_dir containing .txt files
+        audio_files = [f for f in audio_path.iterdir() 
+                       if f.suffix.lower() in audio_extensions]
         
-        # Run inference
-        result = transcribe_file(
-            str(audio_file),
-            model_bundle,
-            prompt,
-            max_new_tokens
-        )
+        if not audio_files:
+            return {
+                "summary": {
+                    "count": 0,
+                    "tp": 0,
+                    "fp": 0,
+                    "fn": 0,
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0
+                },
+                "details": []
+            }
         
-        pred_text = result["text"]
-        
-        # Normalize both texts
-        pred_normalized = _normalize_text(pred_text)
-        gt_normalized = _normalize_text(gt_text)
-        
-        # Compare
-        if match_mode == "exact":
-            match = 1 if pred_normalized == gt_normalized else 0
-        else:
-            # Extensible for future modes
-            match = 1 if pred_normalized == gt_normalized else 0
-        
-        tp += match
-        
-        details.append({
-            "file": audio_file.name,
-            "pred": pred_text,
-            "gt": gt_text,
-            "match": match
-        })
+        for audio_file in audio_files:
+            # Find corresponding ground truth file
+            gt_file = gt_path / f"{audio_file.stem}.txt"
+            
+            if not gt_file.exists():
+                print(f"Warning: No ground truth found for {audio_file.name}, skipping...")
+                continue
+            
+            # Load ground truth
+            with open(gt_file, 'r', encoding='utf-8') as f:
+                gt_text = f.read()
+            
+            # Run inference
+            result = transcribe_file(
+                str(audio_file),
+                model_bundle,
+                prompt,
+                max_new_tokens
+            )
+            
+            pred_text = result["text"]
+            
+            # Normalize both texts
+            pred_normalized = _normalize_text(pred_text)
+            gt_normalized = _normalize_text(gt_text)
+            
+            # Compare
+            if match_mode == "exact":
+                match = 1 if pred_normalized == gt_normalized else 0
+            elif match_mode == "contains":
+                match = 1 if gt_normalized in pred_normalized else 0
+            else:
+                match = 1 if pred_normalized == gt_normalized else 0
+            
+            details.append({
+                "file": audio_file.name,
+                "pred": pred_text,
+                "gt": gt_text,
+                "match": match
+            })
     
     # Calculate metrics
     count = len(details)
+    tp = sum(d["match"] for d in details)
     fp = count - tp  # Files where pred != gt
     fn = count - tp  # Same as FP for binary classification per file
     

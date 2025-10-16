@@ -70,19 +70,29 @@ def evaluate_command(args):
     if not Path(args.audio_dir).exists():
         print(f"Error: Audio directory not found: {args.audio_dir}", file=sys.stderr)
         sys.exit(1)
-    if not Path(args.gt_dir).exists():
-        print(f"Error: Ground truth directory not found: {args.gt_dir}", file=sys.stderr)
-        sys.exit(1)
+    
+    if not args.use_folder_as_label:
+        if not args.gt_dir:
+            print("Error: --gt-dir is required when not using --use-folder-as-label", file=sys.stderr)
+            sys.exit(1)
+        if not Path(args.gt_dir).exists():
+            print(f"Error: Ground truth directory not found: {args.gt_dir}", file=sys.stderr)
+            sys.exit(1)
     
     # Run evaluation
-    print(f"Evaluating folder: {args.audio_dir}", file=sys.stderr)
+    if args.use_folder_as_label:
+        print(f"Evaluating folder: {args.audio_dir} (using subfolder names as labels)", file=sys.stderr)
+    else:
+        print(f"Evaluating folder: {args.audio_dir}", file=sys.stderr)
+    
     result = runner.evaluate_folder(
         args.audio_dir,
         args.gt_dir,
         model_bundle,
         args.prompt,
         args.max_new_tokens,
-        args.match_mode
+        args.match_mode,
+        args.use_folder_as_label
     )
     
     # Output JSON
@@ -161,13 +171,17 @@ def main():
         "--audio-dir",
         type=str,
         required=True,
-        help="Directory containing audio files"
+        help="Directory containing audio files (or subdirectories with audio files)"
     )
     evaluate_parser.add_argument(
         "--gt-dir",
         type=str,
-        required=True,
-        help="Directory containing ground truth .txt files"
+        help="Directory containing ground truth .txt files (not needed if using --use-folder-as-label)"
+    )
+    evaluate_parser.add_argument(
+        "--use-folder-as-label",
+        action="store_true",
+        help="Use subfolder names as ground truth labels (e.g., audio_dir/piano/*.wav, audio_dir/guitar/*.wav)"
     )
     evaluate_parser.add_argument(
         "--prompt",
@@ -184,8 +198,8 @@ def main():
         "--match-mode",
         type=str,
         default="exact",
-        choices=["exact"],
-        help="Matching mode (default: exact)"
+        choices=["exact", "contains"],
+        help="Matching mode: 'exact' for exact match, 'contains' if GT is contained in prediction (default: exact)"
     )
     evaluate_parser.add_argument(
         "--output",
