@@ -76,6 +76,9 @@ def transcribe_file(
 ) -> dict:
     """
     Runs inference on a SINGLE file.
+    Note: Audio Flamingo is an audio understanding model, not a transcription model.
+    It answers questions about audio (sounds, music, speech).
+    
     Returns JSON:
       {
         "file": "<input path>",
@@ -93,25 +96,22 @@ def transcribe_file(
     # Load and preprocess audio
     audio_array, sample_rate = _load_and_preprocess_audio(path, processor, device)
     
-    # Prepare inputs
-    # For audio-flamingo, we need to process audio as input
+    # Default prompt if none provided - Audio Flamingo expects a question/instruction
+    if prompt is None:
+        prompt = "Please describe the audio in detail."
+    
+    # Process audio and text together
+    # Audio Flamingo uses a vision-language model architecture adapted for audio
     inputs = processor(
-        audio=audio_array,
-        sampling_rate=sample_rate,
-        return_tensors="pt"
+        text=prompt,
+        audios=audio_array,
+        return_tensors="pt",
+        padding=True,
+        sampling_rate=sample_rate
     )
     
     # Move inputs to device
     inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
-    
-    # Add prompt if provided
-    if prompt:
-        text_inputs = processor.tokenizer(
-            prompt,
-            return_tensors="pt",
-            padding=True
-        )
-        inputs.update({k: v.to(device) for k, v in text_inputs.items()})
     
     # Generate
     with torch.no_grad():
@@ -120,11 +120,17 @@ def transcribe_file(
                 **inputs,
                 max_new_tokens=max_new_tokens,
                 do_sample=False,
-                num_beams=1
+                num_beams=1,
+                temperature=None,
+                top_p=None
             )
     
-    # Decode output
+    # Decode output - remove the input prompt from the generated text
     generated_text = processor.batch_decode(outputs, skip_special_tokens=True)[0]
+    
+    # Remove the prompt from the output if it's included
+    if prompt in generated_text:
+        generated_text = generated_text.replace(prompt, "").strip()
     
     elapsed_sec = time.time() - start_time
     tokens_generated = outputs.shape[1]
