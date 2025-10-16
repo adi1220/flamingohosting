@@ -2,6 +2,34 @@
 
 Complete offline solution for running nvidia/audio-flamingo-3 locally with Python API, REST server, CLI, and evaluation capabilities.
 
+## Important: What is Audio Flamingo?
+
+**Audio Flamingo 3 is NOT a speech transcription model like Whisper.** It's an audio understanding language model that:
+- Answers questions about audio (sounds, music, speech)
+- Describes and analyzes audio content
+- Reasons about what's happening in audio
+- Handles multi-turn conversations about audio
+
+**Example inputs/outputs:**
+- Input: audio file + "What instruments are playing in this song?"
+- Output: "This song features a piano, acoustic guitar, and drums."
+
+- Input: audio file + "Please describe the audio in detail."
+- Output: "This is a conversation between two people discussing travel plans..."
+
+If you need speech-to-text transcription, use Whisper or similar models instead.
+
+## Common Use Cases
+
+Audio Flamingo excels at:
+
+1. **Music Analysis**: "What instruments are in this song?", "Describe the genre and mood"
+2. **Sound Identification**: "What sounds can you hear?", "Is this indoors or outdoors?"
+3. **Speech Understanding**: "Summarize this conversation", "What is the speaker's mood?"
+4. **Audio Captioning**: "Please describe the audio in detail"
+5. **Temporal Reasoning**: "What happens first in this audio?", "When does the music change?"
+6. **Audio QA**: Any question about the audio content
+
 ## Prerequisites
 
 - Python 3.8+
@@ -34,15 +62,35 @@ import audio_flamingo_runner as runner
 # Load model once
 model_bundle = runner.load_model(model_dir="/path/to/model")
 
-# Transcribe single file
+# Ask questions about audio
 result = runner.transcribe_file(
-    path="/data/audio.wav",
+    path="/data/music.mp3",
     model_bundle=model_bundle,
-    prompt=None,
+    prompt="What instruments are playing in this audio?",
     max_new_tokens=128
 )
-print(result)
-# Output: {"file": "...", "text": "...", "tokens_generated": 45, "elapsed_sec": 0.57}
+print(result["text"])
+# Output: "This audio features a piano, violin, and cello playing together..."
+
+# Describe audio content
+result = runner.transcribe_file(
+    path="/data/conversation.wav",
+    model_bundle=model_bundle,
+    prompt="Please describe the audio in detail.",
+    max_new_tokens=128
+)
+print(result["text"])
+# Output: "This is a conversation between two people discussing..."
+
+# Analyze soundscapes
+result = runner.transcribe_file(
+    path="/data/nature.wav",
+    model_bundle=model_bundle,
+    prompt="What sounds can you hear in this audio?",
+    max_new_tokens=128
+)
+print(result["text"])
+# Output: "I can hear birds chirping, wind rustling through trees..."
 
 # Transcribe multiple files
 results = runner.transcribe_files(
@@ -95,8 +143,8 @@ Response:
 curl -X POST http://127.0.0.1:8000/transcribe \
   -H "Content-Type: application/json" \
   -d '{
-    "paths": ["/absolute/path/to/audio.wav"],
-    "prompt": null,
+    "paths": ["/absolute/path/to/music.mp3"],
+    "prompt": "What instruments are playing in this audio?",
     "max_new_tokens": 128
   }'
 ```
@@ -171,8 +219,8 @@ Response:
 
 ```bash
 python cli.py transcribe \
-  --path /data/audio.wav \
-  --prompt "Transcribe this audio:" \
+  --path /data/music.mp3 \
+  --prompt "What instruments are playing?" \
   --max-new-tokens 128 \
   --output results.json
 ```
@@ -224,7 +272,12 @@ labels/
 
 ### Ground Truth Files
 
-Each `.txt` file should contain the expected transcription (can be single or multi-line).
+Each `.txt` file should contain the expected answer to the question you're asking about the audio. For example:
+
+**audio/song1.wav** - A music file  
+**labels/song1.txt** - "This song features piano, guitar, and drums"
+
+The prompt you provide will be asked for each audio file, and the model's response will be compared to the ground truth text.
 
 ### Normalization
 
@@ -251,10 +304,12 @@ Computed metrics:
 ✅ **Offline Operation**: No network calls after model download  
 ✅ **Multiple Audio Formats**: .wav, .flac, .mp3, .m4a  
 ✅ **Automatic Resampling**: Handles different sample rates  
-✅ **Long Audio Support**: Processes files up to 10+ minutes  
+✅ **Long Audio Support**: Processes files up to 10 minutes  
+✅ **Audio Understanding**: Describes, analyzes, and reasons about audio content  
+✅ **Question Answering**: Ask specific questions about sounds, music, or speech  
 ✅ **GPU Acceleration**: Uses CUDA when available with mixed precision  
 ✅ **Deterministic Inference**: Reproducible results with fixed seeds  
-✅ **Batch Processing**: Efficient multi-file transcription  
+✅ **Batch Processing**: Efficient multi-file analysis  
 ✅ **REST API**: Production-ready FastAPI server  
 ✅ **CLI Tool**: Easy command-line interface  
 ✅ **Evaluation Framework**: Automated testing with metrics  
