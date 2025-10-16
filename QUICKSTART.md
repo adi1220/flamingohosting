@@ -129,7 +129,9 @@ curl -X POST http://127.0.0.1:8000/transcribe \
 
 ## Evaluation Mode
 
-If you want to test the model's accuracy:
+If you want to test the model's accuracy, you have two options:
+
+### Option 1: Separate Label Files
 
 **1. Create your test set:**
 ```
@@ -149,6 +151,40 @@ python cli.py evaluate \
   --gt-dir ./labels \
   --prompt "Please describe the audio in detail."
 ```
+
+### Option 2: Folder Names as Labels
+
+**1. Organize files by category:**
+```
+audio/
+  ├── piano/
+  │   ├── song1.mp3
+  │   └── song2.wav
+  ├── guitar/
+  │   ├── track1.mp3
+  │   └── track2.wav
+  └── drums/
+      └── beat1.mp3
+```
+
+**2. Run evaluation:**
+```bash
+python cli.py evaluate \
+  --audio-dir ./audio \
+  --use-folder-as-label \
+  --prompt "What instrument is playing?" \
+  --match-mode contains
+```
+
+### Match Modes
+
+- **exact**: Full string must match exactly (after normalization)
+- **contains**: Ground truth can be anywhere in the prediction
+
+Example with `contains` mode:
+- Folder name (GT): `piano`
+- Model output: "This is a beautiful piano performance"
+- Result: ✅ Match! (because "piano" is contained in the output)
 
 **3. Get metrics:**
 - Precision: How accurate are the matches?
