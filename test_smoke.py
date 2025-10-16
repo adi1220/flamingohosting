@@ -71,15 +71,25 @@ def run_smoke_test():
         
         print("\n1. Creating test audio files...")
         test_files = []
+        test_prompts = [
+            "Please describe the audio in detail.",
+            "What sounds can you hear in this audio?",
+            "Describe the characteristics of this audio."
+        ]
+        
         for i in range(3):
             audio_path = audio_dir / f"test_{i:03d}.wav"
             create_test_audio(str(audio_path), duration=1.0 + i * 0.5)
             test_files.append(str(audio_path))
             
-            # Create corresponding label
+            # Create corresponding label with expected answer
             label_path = labels_dir / f"test_{i:03d}.txt"
             with open(label_path, 'w') as f:
-                f.write(f"Test audio number {i}")
+                # These are example expected answers
+                f.write(f"This audio contains a tone at 440 Hz with some harmonics.")
+        
+        # Define the prompt to use for evaluation
+        eval_prompt = "Please describe the audio in detail."
         
         # Load model
         print("\n2. Loading model...")
@@ -87,22 +97,24 @@ def run_smoke_test():
         print(f"   Device: {model_bundle['device']}")
         
         # Test single file transcription
-        print("\n3. Testing single file transcription...")
+        print("\n3. Testing single file audio understanding...")
         result = runner.transcribe_file(
             test_files[0],
             model_bundle,
+            prompt="Please describe the audio in detail.",
             max_new_tokens=64
         )
         print(f"   File: {result['file']}")
-        print(f"   Text: {result['text'][:100]}...")
+        print(f"   Response: {result['text'][:100]}...")
         print(f"   Tokens: {result['tokens_generated']}")
         print(f"   Time: {result['elapsed_sec']:.2f}s")
         
         # Test batch transcription
-        print("\n4. Testing batch transcription...")
+        print("\n4. Testing batch audio understanding...")
         results = runner.transcribe_files(
             test_files,
             model_bundle,
+            prompt="What sounds can you hear?",
             max_new_tokens=64
         )
         print(f"   Processed {len(results)} files")
@@ -115,6 +127,7 @@ def run_smoke_test():
             str(audio_dir),
             str(labels_dir),
             model_bundle,
+            prompt=eval_prompt,
             max_new_tokens=64
         )
         
